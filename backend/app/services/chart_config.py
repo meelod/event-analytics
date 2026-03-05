@@ -31,7 +31,7 @@ determine the best chart type and configuration.
 
 Return a JSON object with:
 {
-  "chart_type": "line" | "bar" | "area" | "pie" | "number",
+  "chart_type": "line" | "bar" | "area" | "pie" | "number" | "table",
   "title": "descriptive title",
   "x_axis": "column_name for x-axis" or null,
   "y_axis": "column_name for y-axis" or null,
@@ -43,6 +43,7 @@ Guidelines:
 - Categorical comparisons -> "bar"
 - Proportions -> "pie" (only when <= 10 categories)
 - Single aggregate value -> "number"
+- Raw event listings, wide multi-column detail rows, or data that doesn't aggregate well -> "table"
 - Always use readable display names
 - Use distinct colors for each series: #8884d8, #82ca9d, #ffc658, #ff7300, #0088fe
 Return ONLY valid JSON, no markdown fences, no explanation."""

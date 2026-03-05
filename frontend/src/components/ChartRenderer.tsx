@@ -9,12 +9,13 @@
  * - This component just maps config → React components
  * - No business logic here - it's purely a presentation layer
  *
- * Supports 5 chart types:
+ * Supports 6 chart types:
  * - "number": Single big metric (e.g., "Total Users: 1,234")
  * - "pie": Proportional data (e.g., "Events by type")
  * - "line": Time series (e.g., "DAU over 30 days")
  * - "bar": Categorical comparison (e.g., "Top 5 events")
  * - "area": Time series with filled area (e.g., "Revenue over time")
+ * - "table": Raw data display — skips chart rendering entirely
  *
  * The component lookup pattern (lines 79-89) avoids a big switch statement:
  * instead of if/else for each chart type, we use an object as a map from
@@ -44,7 +45,7 @@ const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff7300", "#0088fe", "#00C49F"
 
 // This interface matches the JSON shape returned by chart_config.py on the backend
 interface ChartConfig {
-  chart_type: "line" | "bar" | "area" | "pie" | "number";
+  chart_type: "line" | "bar" | "area" | "pie" | "number" | "table";
   title: string;
   x_axis: string | null;   // Column name for X axis (e.g., "day")
   y_axis: string | null;   // Column name for Y axis (e.g., "daily_users")
@@ -63,6 +64,13 @@ export default function ChartRenderer({ config, data }: Props) {
         No data to display
       </div>
     );
+  }
+
+  // ── "table" type: skip the chart entirely ────────────────────────────
+  // Used for raw event listings where a chart doesn't add value.
+  // Returns null so the dashboard only shows the raw data table below.
+  if (config.chart_type === "table") {
+    return null;
   }
 
   // ── "number" type: single metric display ───────────────────────────

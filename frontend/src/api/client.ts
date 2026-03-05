@@ -102,6 +102,14 @@ export const api = {
   deleteVisualization: (id: string) =>
     request<any>(`/visualizations/${id}`, { method: "DELETE" }),
 
+  // POST /api/v1/events - Send a single event from the dashboard (uses session cookie)
+  // Same endpoint as ingestEvent above, but the backend accepts either auth method
+  sendEvent: (event: string, distinctId: string, properties: Record<string, any> = {}) =>
+    request<{ status: string; event_id: string }>("/events", {
+      method: "POST",
+      body: JSON.stringify({ event, distinct_id: distinctId, properties }),
+    }),
+
   // POST /api/v1/events/seed - Seed randomized demo data (developer mode)
   seedDemoData: (count: number = 1000, daysBack: number = 30) =>
     request<{ status: string; inserted: number; distribution: Record<string, number> }>(

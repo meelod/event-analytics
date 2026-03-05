@@ -129,7 +129,7 @@ User types question → POST /api/v1/query
 Frontend receives response → ChartRenderer reads chart_config JSON
   → Config specifies: chart_type, x_axis, y_axis, series[]
   → Object lookup maps chart_type → Recharts component
-  → Renders: LineChart, BarChart, AreaChart, PieChart, or single number
+  → Renders: LineChart, BarChart, AreaChart, PieChart, single number, or table-only
 ```
 
 ### 4. Saving a Visualization
@@ -164,7 +164,7 @@ LLM-generated SQL is **untrusted input**. The sandbox applies four validation la
 Uses GPT-4o-mini (cheaper model, simpler task) to determine the best visualization:
 - Sends the question, SQL, column names, and 3 sample rows
 - Returns a JSON config matching the ChartRenderer's expected format
-- Guidelines: time series → line, categorical → bar, proportions → pie, single value → number
+- Guidelines: time series → line, categorical → bar, proportions → pie, single value → number, raw listings → table
 
 ### `services/ingestion.py` — Event Ingestion
 Validates and inserts events with a **partial success pattern**: if one event in a batch fails validation, the rest still get inserted. Uses `executemany` for batch efficiency.
@@ -249,6 +249,9 @@ Click the gear icon on the login page to reveal a list of all existing organizat
 ### Seed Demo Data (Settings Page)
 On the Settings page, toggle "Developer mode" to reveal a "Seed Demo Data" button. Clicking it generates 1,000 randomized events (7 types, realistic properties, 30 days of history) directly into the current org's data. The success response shows the count and per-event-type distribution. Head to the Dashboard to immediately query the new data.
 
+### Send Event (Settings Page)
+Developer mode also reveals a "Send Event" form. Click any of the 7 event type tags (page_view, signup, login, etc.) to select it — properties auto-fill with realistic defaults matching the seed data. Property values are clickable tags (e.g., browser: Chrome / Firefox / Safari / Edge), while numeric fields like `amount` use a text input. Click "Send Event" to insert a single event into the current org's data via the same `POST /events` endpoint used by SDKs.
+
 > In production, you'd gate these endpoints behind an environment flag or remove them entirely.
 
 ---
@@ -278,7 +281,7 @@ On the Settings page, toggle "Developer mode" to reveal a "Seed Demo Data" butto
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/api/v1/events` | API Key | Ingest single event |
+| `POST` | `/api/v1/events` | API Key or Session | Ingest single event |
 | `POST` | `/api/v1/events/batch` | API Key | Ingest batch (up to 1000) |
 | `POST` | `/api/v1/events/seed` | Session | Seed randomized demo data (dev mode) |
 
@@ -382,7 +385,7 @@ Five tables in DuckDB:
 - Backend decides WHAT to render (chart type, axes, series) via ChartConfig JSON
 - Frontend just maps config to Recharts components
 - Object lookup pattern (`{line: LineChart, bar: BarChart, ...}`) instead of switch statement
-- Supports 5 chart types: line, bar, area, pie, number
+- Supports 6 chart types: line, bar, area, pie, number, table (skips chart, shows data only)
 
 ### Routing
 - React Router v6 with nested routes
@@ -438,14 +441,14 @@ event-analytics/
 │       ├── api/client.ts           # Centralized fetch wrapper for all API calls
 │       ├── stores/authStore.ts     # Zustand auth state (login, devLogin, logout)
 │       ├── components/
-│       │   ├── ChartRenderer.tsx   # Config-driven Recharts (line/bar/area/pie/number)
+│       │   ├── ChartRenderer.tsx   # Config-driven Recharts (line/bar/area/pie/number/table)
 │       │   ├── QueryBar.tsx        # NL input + example question buttons
 │       │   └── Layout.tsx          # Sidebar navigation + Outlet
 │       └── pages/
 │           ├── DashboardPage.tsx   # Query bar + chart + SQL preview + raw data + save
 │           ├── LoginPage.tsx       # Login + org creation + dev quick login (⚙)
 │           ├── SavedVisualizationsPage.tsx  # Browse + reload saved analytics
-│           └── SettingsPage.tsx    # Org info + API docs + dev mode seed button
+│           └── SettingsPage.tsx    # Org info + API docs + dev mode seed + send event
 ├── scripts/
 │   ├── seed.py                     # CLI: generate org + events (--name, --slug, --events, --days)
 │   └── run_dev.sh                  # Start backend + frontend together

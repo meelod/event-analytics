@@ -58,6 +58,42 @@ def get_current_org_from_api_key(
     return Organization(**rows[0])
 
 
+def get_current_org_from_api_key_or_session(
+    x_api_key: str | None = Header(None),
+    session: str | None = Cookie(None),
+    db: DuckDBManager = Depends(get_db),
+) -> Organization:
+    """
+    Dual authentication - accepts either API key or session cookie.
+
+    Used by POST /events so the same endpoint works for both SDK ingestion
+    (API key) and the dashboard UI (session cookie). Tries API key first,
+    falls back to session. Raises 401 if neither is valid.
+    """
+    if x_api_key:
+        key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+        rows = db.execute_read(
+            "SELECT o.id, o.name, o.slug FROM api_keys ak "
+            "JOIN organizations o ON ak.org_id = o.id "
+            "WHERE ak.key_hash = ? AND ak.is_active = true",
+            (key_hash,),
+        )
+        if rows:
+            return Organization(**rows[0])
+
+    if session:
+        rows = db.execute_read(
+            "SELECT o.id, o.name, o.slug FROM sessions s "
+            "JOIN organizations o ON s.org_id = o.id "
+            "WHERE s.token = ? AND s.expires_at > current_timestamp",
+            (session,),
+        )
+        if rows:
+            return Organization(**rows[0])
+
+    raise HTTPException(status_code=401, detail="Invalid API key or session")
+
+
 def get_current_org_from_session(
     session: str | None = Cookie(None),  # FastAPI extracts from "session" cookie
     db: DuckDBManager = Depends(get_db),

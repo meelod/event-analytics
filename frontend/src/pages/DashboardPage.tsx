@@ -106,7 +106,14 @@ export default function DashboardPage() {
                 <span>{result.execution_time_ms.toFixed(0)}ms</span>
               </div>
             </div>
-            <ChartRenderer config={result.chart_config} data={result.data} />
+            {/* "table" type skips the chart — data is shown in the raw table below */}
+            {result.chart_config.chart_type === "table" ? (
+              <p className="text-sm text-gray-500 py-4">
+                Showing results as a table — this data is best viewed in tabular form.
+              </p>
+            ) : (
+              <ChartRenderer config={result.chart_config} data={result.data} />
+            )}
           </div>
 
           <div className="flex items-center gap-3">

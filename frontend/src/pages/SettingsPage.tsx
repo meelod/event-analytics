@@ -23,6 +23,44 @@ interface SeedResult {
   distribution: Record<string, number>;
 }
 
+// Property config: options = clickable tags, no options = text input.
+// Values match seeding.py exactly so the data looks consistent.
+interface PropConfig {
+  default: string;
+  options?: string[];
+}
+
+const EVENT_TEMPLATES: Record<string, Record<string, PropConfig>> = {
+  page_view: {
+    page:     { default: "/pricing", options: ["/home", "/pricing", "/features", "/blog", "/about", "/docs", "/signup", "/login"] },
+    referrer: { default: "google",   options: ["google", "twitter", "direct", "github", "hackernews"] },
+    browser:  { default: "Chrome",   options: ["Chrome", "Firefox", "Safari", "Edge"] },
+  },
+  signup: {
+    plan:   { default: "pro",     options: ["free", "pro", "enterprise"] },
+    source: { default: "organic", options: ["organic", "referral", "ad", "blog"] },
+  },
+  login: {
+    method: { default: "google", options: ["email", "google", "github"] },
+  },
+  button_click: {
+    button_id: { default: "cta_hero", options: ["cta_hero", "nav_signup", "pricing_pro", "pricing_enterprise", "docs_link"] },
+    page:      { default: "/home",    options: ["/home", "/pricing", "/features"] },
+  },
+  purchase: {
+    amount:   { default: "99.99" },
+    plan:     { default: "enterprise", options: ["pro", "enterprise"] },
+    currency: { default: "USD",        options: ["USD"] },
+  },
+  feature_used: {
+    feature: { default: "dashboard", options: ["dashboard", "export", "api", "webhook", "integration", "report"] },
+  },
+  error: {
+    error_code: { default: "500", options: ["400", "401", "403", "404", "500"] },
+    page:       { default: "/api/query", options: ["/api/events", "/api/query", "/dashboard"] },
+  },
+};
+
 export default function SettingsPage() {
   const { orgId, orgName, orgSlug } = useAuthStore();
 
@@ -31,6 +69,13 @@ export default function SettingsPage() {
   const [seeding, setSeeding] = useState(false);
   const [seedResult, setSeedResult] = useState<SeedResult | null>(null);
   const [seedError, setSeedError] = useState("");
+
+  // Manual event form state
+  const [eventName, setEventName] = useState("");
+  const [eventProps, setEventProps] = useState<Record<string, string>>({});
+  const [sending, setSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState("");
+  const [sendError, setSendError] = useState("");
 
   const handleSeed = async () => {
     setSeeding(true);
@@ -43,6 +88,42 @@ export default function SettingsPage() {
       setSeedError(err.message);
     } finally {
       setSeeding(false);
+    }
+  };
+
+  const selectEventType = (tag: string) => {
+    setEventName(tag);
+    // Pull default values from the template configs
+    const template = EVENT_TEMPLATES[tag] || {};
+    const defaults: Record<string, string> = {};
+    for (const [key, config] of Object.entries(template)) {
+      defaults[key] = config.default;
+    }
+    setEventProps(defaults);
+    setSendSuccess("");
+    setSendError("");
+  };
+
+  const handleSendEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSending(true);
+    setSendError("");
+    setSendSuccess("");
+    try {
+      // Parse numbers so they're stored as numbers in JSON (e.g., amount: 99.99)
+      const props: Record<string, any> = {};
+      for (const [key, value] of Object.entries(eventProps)) {
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        if (!isNaN(Number(trimmed))) props[key] = Number(trimmed);
+        else props[key] = trimmed;
+      }
+      const res = await api.sendEvent(eventName, "dashboard-user", props);
+      setSendSuccess(`Sent "${eventName}" with ${Object.keys(props).length} properties`);
+    } catch (err: any) {
+      setSendError(err.message);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -173,6 +254,88 @@ export default function SettingsPage() {
                 </p>
               </div>
             )}
+
+            {/* Manual event creation form */}
+            <div className="border-t border-gray-200 pt-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                Send Event
+              </h4>
+
+              <form onSubmit={handleSendEvent} className="space-y-3">
+                {/* Event type tags — click to select + auto-fill properties */}
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.keys(EVENT_TEMPLATES).map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => selectEventType(tag)}
+                      className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                        eventName === tag
+                          ? "bg-indigo-100 border-indigo-300 text-indigo-700 font-medium"
+                          : "bg-gray-50 border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600"
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Auto-filled properties — tags or text input per field */}
+                {eventName && EVENT_TEMPLATES[eventName] && (
+                  <div className="bg-gray-50 rounded-md p-3 space-y-3">
+                    {Object.entries(EVENT_TEMPLATES[eventName]).map(([key, config]) => (
+                      <div key={key}>
+                        <p className="text-xs font-medium text-gray-500 mb-1">{key}</p>
+                        {config.options ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {config.options.map((opt) => (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => setEventProps({ ...eventProps, [key]: opt })}
+                                className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                                  eventProps[key] === opt
+                                    ? "bg-indigo-100 border-indigo-300 text-indigo-700 font-medium"
+                                    : "bg-white border-gray-200 text-gray-600 hover:border-indigo-300"
+                                }`}
+                              >
+                                {opt}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={eventProps[key] || ""}
+                            onChange={(e) =>
+                              setEventProps({ ...eventProps, [key]: e.target.value })
+                            }
+                            className="w-40 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Send button + feedback */}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={sending || !eventName.trim()}
+                    className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                  >
+                    {sending ? "Sending..." : "Send Event"}
+                  </button>
+                  {sendSuccess && (
+                    <span className="text-sm text-green-600">{sendSuccess}</span>
+                  )}
+                  {sendError && (
+                    <span className="text-sm text-red-600">{sendError}</span>
+                  )}
+                </div>
+              </form>
+            </div>
           </div>
         )}
       </div>

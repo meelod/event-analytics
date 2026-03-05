@@ -1,22 +1,22 @@
 """
 Event ingestion API routes.
 
-Two endpoints:
-- POST /events     → single event (returns event_id)
-- POST /events/batch → up to 1000 events (returns accepted count + errors)
+Two ingestion endpoints:
+- POST /events       → single event (API key OR session cookie)
+- POST /events/batch → up to 1000 events (API key only)
 
-Both use API key auth (X-API-Key header). The org_id is resolved from the
-key via the get_current_org_from_api_key dependency - clients never specify
-their own org_id, preventing cross-tenant data injection.
+POST /events accepts dual auth so it works from both SDK/curl (API key)
+and the dashboard UI (session cookie). POST /events/batch is API-key-only
+since batch ingestion is an SDK concern, not a UI one.
 
-The single event endpoint wraps the event in a list and reuses the batch
-ingestion service. This avoids duplicating logic.
+Both resolve org_id from auth (never from the request body) to prevent
+cross-tenant data injection.
 """
 
 from fastapi import APIRouter, Depends
 
 from app.db.engine import DuckDBManager
-from app.dependencies import get_current_org_from_api_key, get_current_org_from_session, get_db
+from app.dependencies import get_current_org_from_api_key, get_current_org_from_api_key_or_session, get_current_org_from_session, get_db
 from app.models.event import BatchResponse, EventBatchIn, EventIn, EventResponse, SeedRequest, SeedResponse
 from app.models.organization import Organization
 from app.services.ingestion import ingest_events
@@ -28,10 +28,10 @@ router = APIRouter(prefix="/api/v1", tags=["ingestion"])
 @router.post("/events", response_model=EventResponse, status_code=201)
 async def ingest_single_event(
     event: EventIn,
-    org: Organization = Depends(get_current_org_from_api_key),
+    org: Organization = Depends(get_current_org_from_api_key_or_session),
     db: DuckDBManager = Depends(get_db),
 ):
-    """Ingest one event. Auth: X-API-Key header."""
+    """Ingest one event. Auth: API key header OR session cookie."""
     accepted, errors, event_ids = await ingest_events(db, org.id, [event])
     return EventResponse(event_id=event_ids[0])
 
