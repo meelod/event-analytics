@@ -1,3 +1,24 @@
+/**
+ * Main dashboard page - the core feature of the application.
+ *
+ * This is where the NL-to-SQL pipeline is triggered from the frontend:
+ * 1. User types a question in QueryBar
+ * 2. handleQuery() sends it to POST /api/v1/query
+ * 3. Backend generates SQL (GPT-4o) → validates (sandbox) → executes (DuckDB)
+ *    → determines chart type (GPT-4o-mini) → returns everything
+ * 4. Response contains: generated_sql, data (rows), chart_config, execution_time_ms
+ * 5. ChartRenderer renders the chart based on chart_config
+ * 6. Raw data is shown in a scrollable table below the chart
+ *
+ * Additional features:
+ * - "Show SQL" toggle: reveals the LLM-generated SQL for transparency
+ * - Save button: persists the visualization (question + SQL + data + chart config)
+ *   to the backend for later viewing on the Saved page
+ *
+ * The data table shows max 100 rows (slice(0, 100)) to prevent DOM bloat,
+ * even though the query may return up to 10000 rows (sandbox LIMIT).
+ */
+
 import { useState } from "react";
 import { api } from "../api/client";
 import ChartRenderer from "../components/ChartRenderer";

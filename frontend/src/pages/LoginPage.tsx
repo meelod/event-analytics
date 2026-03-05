@@ -1,3 +1,22 @@
+/**
+ * Login page with two modes: login and org creation.
+ *
+ * Login flow:
+ * 1. User enters their API key (e.g., ea_live_abc123...)
+ * 2. POST /auth/login validates the key and sets a session cookie
+ * 3. On success, navigate to "/" (dashboard)
+ *
+ * Org creation flow:
+ * 1. User clicks "Create new organization"
+ * 2. Enters org name + slug
+ * 3. POST /api/v1/orgs creates the org and returns a raw API key
+ * 4. The key is displayed in a green box (shown only once - it's hashed in the DB)
+ * 5. The key is also auto-filled into the login input for convenience
+ *
+ * Slug input: auto-lowercases and replaces non-alphanumeric chars with hyphens
+ * for URL-friendly organization identifiers.
+ */
+
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";

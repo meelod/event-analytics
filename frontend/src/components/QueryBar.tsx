@@ -1,3 +1,19 @@
+/**
+ * Natural language query input with example question buttons.
+ *
+ * Two ways to submit a question:
+ * 1. Type in the text input and press Enter / click "Ask"
+ * 2. Click one of the example query buttons (auto-fills and submits)
+ *
+ * The example buttons serve a dual purpose:
+ * - Help new users understand what they can ask
+ * - Provide quick access to common analytics questions
+ *
+ * Props:
+ * - onSubmit: called with the question string when the user submits
+ * - isLoading: disables the input + buttons while a query is in progress
+ */
+
 import { useState } from "react";
 
 interface Props {

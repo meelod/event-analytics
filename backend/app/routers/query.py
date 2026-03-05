@@ -1,3 +1,17 @@
+"""
+Natural language query route.
+
+POST /api/v1/query accepts a question string, runs the full NL-to-SQL pipeline,
+and returns the generated SQL, query results, and chart configuration.
+
+Uses session auth (not API key) because this is a dashboard feature.
+The org_id is resolved from the session cookie automatically.
+
+Error handling separates sandbox errors (400 - the SQL was unsafe) from
+execution errors (500 - something crashed). This helps the frontend show
+appropriate error messages.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.db.engine import DuckDBManager
@@ -20,6 +34,8 @@ async def natural_language_query(
         result = await generate_and_execute_query(request.question, org.id, db)
         return NLQueryResponse(**result)
     except SQLSandboxError as e:
+        # 400: The LLM generated unsafe SQL (blocked by sandbox)
         raise HTTPException(status_code=400, detail=f"Query safety error: {e}")
     except Exception as e:
+        # 500: Something else went wrong (LLM API error, DuckDB error, etc.)
         raise HTTPException(status_code=500, detail=f"Query execution error: {str(e)}")

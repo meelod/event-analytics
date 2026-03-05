@@ -1,3 +1,20 @@
+"""
+Saved visualizations CRUD routes.
+
+When a user asks a question on the dashboard and likes the result, they can
+save it. This persists:
+- The original question ("Show daily active users")
+- The generated SQL
+- The query results (snapshot of the data at save time)
+- The chart configuration (chart type, axes, colors)
+
+Reloading a saved visualization is instant - it renders from the cached data,
+no LLM call or query needed.
+
+All queries filter by org_id (from the session) for multi-tenant isolation.
+A user from Org A can never see Org B's saved visualizations.
+"""
+
 import json
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +34,7 @@ async def list_visualizations(
     org: Organization = Depends(get_current_org_from_session),
     db: DuckDBManager = Depends(get_db),
 ):
+    """List all saved visualizations for the current org, newest first."""
     rows = db.execute_read(
         "SELECT id, title, nl_question, chart_config, created_at "
         "FROM saved_visualizations WHERE org_id = ? ORDER BY created_at DESC",
@@ -24,6 +42,7 @@ async def list_visualizations(
     )
     result = []
     for row in rows:
+        # DuckDB may return JSON as a string or a dict depending on version
         chart_config = row["chart_config"]
         if isinstance(chart_config, str):
             chart_config = json.loads(chart_config)
@@ -45,6 +64,7 @@ async def save_visualization(
     org: Organization = Depends(get_current_org_from_session),
     db: DuckDBManager = Depends(get_db),
 ):
+    """Save a visualization. The frontend sends the full query result + chart config."""
     viz_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     await db.execute_write(
@@ -53,6 +73,7 @@ async def save_visualization(
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [(
             viz_id, org.id, body.title, body.nl_question, body.generated_sql,
+            # default=str handles datetime objects in the result data
             json.dumps(body.result_data, default=str),
             json.dumps(body.chart_config, default=str),
             now, now,
@@ -72,6 +93,7 @@ async def get_visualization(
     org: Organization = Depends(get_current_org_from_session),
     db: DuckDBManager = Depends(get_db),
 ):
+    """Get a single visualization. Always filters by org_id for isolation."""
     rows = db.execute_read(
         "SELECT * FROM saved_visualizations WHERE id = ? AND org_id = ?",
         (viz_id, org.id),
@@ -79,6 +101,7 @@ async def get_visualization(
     if not rows:
         raise HTTPException(status_code=404, detail="Visualization not found")
     row = rows[0]
+    # Parse JSON fields if DuckDB returned them as strings
     result_data = row["result_data"]
     chart_config = row["chart_config"]
     if isinstance(result_data, str):
@@ -99,6 +122,7 @@ async def delete_visualization(
     org: Organization = Depends(get_current_org_from_session),
     db: DuckDBManager = Depends(get_db),
 ):
+    """Delete a visualization. Checks ownership via org_id before deleting."""
     rows = db.execute_read(
         "SELECT id FROM saved_visualizations WHERE id = ? AND org_id = ?",
         (viz_id, org.id),

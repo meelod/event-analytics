@@ -1,3 +1,17 @@
+/**
+ * App shell layout with sidebar navigation.
+ *
+ * Uses React Router's <Outlet /> pattern:
+ * - Layout renders the sidebar (nav links + logout button)
+ * - <Outlet /> is a placeholder that React Router fills with the active child route
+ * - When you navigate to "/saved", Layout stays mounted and Outlet swaps to SavedVisualizationsPage
+ *
+ * This avoids re-rendering the sidebar on every page navigation.
+ *
+ * Active nav highlighting: compares current location.pathname to each nav item's
+ * path and applies indigo styles to the matching one.
+ */
+
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "../stores/authStore";
 

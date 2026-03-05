@@ -1,19 +1,45 @@
 # Event Analytics Platform
 
-A lightweight, open-source alternative to Mixpanel. Multi-tenant event analytics with natural language querying and chart rendering.
+A lightweight, open-source alternative to Mixpanel. Multi-tenant event analytics with natural language querying and automatic chart rendering. Built entirely for local use - no Docker, no external databases, no cloud infrastructure required.
 
-## Architecture
+## Architecture Overview
 
 ```
-[SDK/curl] --API Key--> [FastAPI: /events] --> [DuckDB]
-[Browser]  --Session-->  [FastAPI: /query]  --> [OpenAI GPT-4o] --> [SQL Sandbox] --> [DuckDB] --> [GPT-4o-mini: Chart Config] --> [React + Recharts]
+┌─────────────────── INGESTION PATH ────────────────────┐
+│                                                        │
+│  [SDK / curl]  ──X-API-Key──>  POST /events  ──>  DuckDB (events table)
+│                                                        │
+└────────────────────────────────────────────────────────┘
+
+┌─────────────────── QUERY PATH ────────────────────────┐
+│                                                        │
+│  [Browser]  ──Session Cookie──>  POST /query           │
+│                                    │                   │
+│                                    v                   │
+│                              GPT-4o: NL → SQL          │
+│                                    │                   │
+│                                    v                   │
+│                              SQL Sandbox (4 layers)    │
+│                                    │                   │
+│                                    v                   │
+│                              DuckDB: Execute query     │
+│                                    │                   │
+│                                    v                   │
+│                              GPT-4o-mini: Chart config │
+│                                    │                   │
+│                                    v                   │
+│                              React + Recharts: Render  │
+│                                                        │
+└────────────────────────────────────────────────────────┘
 ```
 
 **Tech Stack:**
-- **Backend:** Python, FastAPI, DuckDB (embedded analytical database)
-- **Frontend:** React, TypeScript, Vite, Tailwind CSS, Recharts
+- **Backend:** Python 3.11, FastAPI, DuckDB (embedded analytical database)
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Recharts, Zustand
 - **LLM:** OpenAI GPT-4o (SQL generation), GPT-4o-mini (chart configuration)
-- **SQL Safety:** sqlglot AST-level validation of LLM-generated queries
+- **SQL Safety:** sqlglot for AST-level validation of LLM-generated queries
+
+---
 
 ## Quick Start
 
@@ -38,9 +64,9 @@ cd frontend && npm install && cd ..
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 
-# 3. Seed demo data (creates org + 15K events)
+# 3. Seed demo data (creates org + 15K events across 7 event types)
 python3 scripts/seed.py
-# Save the API key that is printed!
+# Save the API key that is printed - it's shown only once!
 
 # 4. Start both servers
 ./scripts/run_dev.sh
@@ -48,48 +74,164 @@ python3 scripts/seed.py
 
 Open http://localhost:5173, login with the API key from step 3.
 
+### Running Servers Individually
+
+```bash
+# Backend only (port 8000)
+cd backend && python3 -m uvicorn app.main:app --port 8000 --reload
+
+# Frontend only (port 5173, proxies /api to backend)
+cd frontend && npm run dev
+```
+
 ### Try These Queries
 - "Show daily active users for the last 30 days"
 - "What are the top 5 events this week?"
 - "Show conversion from signup to purchase by day"
 - "What pages get the most views?"
 - "Show hourly event volume for today"
+- "How many users signed up this month?"
 
-## Architecture Decisions
+---
+
+## Data Flow (End-to-End)
+
+### 1. Event Ingestion
+```
+Client sends event → API key validated (SHA-256 hash lookup)
+  → org_id resolved from key → Event validated (Pydantic)
+  → UUID generated, timestamp defaulted → Batch INSERT into DuckDB
+```
+
+Events are the raw data. Each event has:
+- `event_name` (e.g., "page_view", "signup", "purchase")
+- `distinct_id` (user identifier, e.g., "user-123")
+- `properties` (JSON object with arbitrary key-value pairs)
+- `org_id` (automatically set from the authenticated API key)
+- `timestamp` (client-provided or server-defaulted to now)
+
+### 2. Natural Language Query
+```
+User types question → POST /api/v1/query
+  → Fetch real event names + property keys from DuckDB (context injection)
+  → Build system prompt with schema + event context + safety rules
+  → GPT-4o generates SQL (temperature=0 for determinism)
+  → SQL Sandbox validates: regex → AST → org_id check → LIMIT
+  → DuckDB executes the validated SQL
+  → GPT-4o-mini determines chart type from question + results
+  → Return: { generated_sql, data, chart_config, execution_time_ms }
+```
+
+### 3. Chart Rendering
+```
+Frontend receives response → ChartRenderer reads chart_config JSON
+  → Config specifies: chart_type, x_axis, y_axis, series[]
+  → Component lookup maps chart_type → Recharts component
+  → Renders: LineChart, BarChart, AreaChart, PieChart, or single number
+```
+
+### 4. Saving a Visualization
+```
+User clicks "Save" → POST /api/v1/visualizations
+  → Stores snapshot: question, SQL, result data, chart config
+  → Reload is instant (no LLM call, renders from cached data)
+  → Trade-off: data may become stale, but saves LLM tokens
+```
+
+---
+
+## Key Services (Backend)
+
+### `services/nl_to_sql.py` - NL-to-SQL Pipeline
+The core intelligence of the system. Orchestrates the full query flow:
+1. **Context injection** (`get_org_context()`): Queries real event names and property keys from DuckDB and appends them to the LLM prompt. This prevents the LLM from hallucinating event names that don't exist in the data.
+2. **SQL generation** (`generate_sql()`): Calls GPT-4o with a detailed system prompt containing the full schema, 13 DuckDB-specific rules, and the org's actual event catalog. Temperature=0 for deterministic output.
+3. **Orchestration** (`generate_and_execute_query()`): Generate SQL → validate in sandbox → execute against DuckDB → get chart config → return everything.
+
+### `services/sql_sandbox.py` - SQL Safety (Defense in Depth)
+LLM-generated SQL is **untrusted input**. The sandbox applies four validation layers:
+
+| Layer | What it catches | How |
+|-------|----------------|-----|
+| 1. Regex blocklist | INSERT, DROP, COPY, file functions, ATTACH | Pattern matching on raw SQL |
+| 2. AST parsing | Multiple statements, non-SELECT queries | sqlglot parses SQL into an AST |
+| 3. Org ID check | Missing tenant isolation filter | String check for org_id in SQL |
+| 4. LIMIT enforcement | Unbounded result sets | Appends `LIMIT 10000` if missing |
+
+### `services/chart_config.py` - Chart Type Determination
+Uses GPT-4o-mini (cheaper model, simpler task) to determine the best visualization:
+- Sends the question, SQL, column names, and 3 sample rows
+- Returns a JSON config matching the ChartRenderer's expected format
+- Guidelines: time series → line, categorical → bar, proportions → pie, single value → number
+
+### `services/ingestion.py` - Event Ingestion
+Validates and inserts events with a **partial success pattern**: if one event in a batch fails validation, the rest still get inserted. Uses `executemany` for batch efficiency.
+
+### `db/engine.py` - DuckDB Connection Manager
+Manages the single DuckDB connection with:
+- **asyncio.Lock** for write serialization (DuckDB's single-writer constraint)
+- **Cursor-based reads** that leverage DuckDB's MVCC (reads never block writes)
+- **executemany** for batch inserts (one round-trip for N events)
+
+---
+
+## Architecture Decisions & Trade-offs
 
 ### Why DuckDB?
-DuckDB is an embedded columnar analytical database - think "SQLite for analytics." It was chosen because:
+DuckDB is an embedded columnar analytical database - think "SQLite for analytics":
 - **No Docker/infrastructure required** - it's a pip install, satisfying the local-only requirement
 - **Columnar storage** - optimized for the aggregation queries this platform runs (COUNT, GROUP BY, date_trunc)
 - **Standard SQL** - LLM-generated queries work naturally
 - **MVCC concurrency** - reads never block writes within the same process
+- **Trade-off**: Single-writer constraint means writes are serialized via asyncio.Lock. Fine for this use case (event ingestion isn't high-throughput for a local tool).
 
-### NL-to-SQL Pipeline (Two-Stage LLM)
-The query pipeline makes two LLM calls per question:
-1. **GPT-4o** generates the SQL query (accuracy-critical)
-2. **GPT-4o-mini** determines chart type and configuration (simpler task, cheaper model)
+### Why Two LLM Calls?
+Splitting SQL generation (GPT-4o) and chart configuration (GPT-4o-mini):
+- **Accuracy**: SQL generation is the harder task; using the best model improves reliability
+- **Cost**: Chart config is simple pattern matching; using mini saves ~10x per call
+- **Reliability**: A single prompt producing both SQL and chart JSON is more fragile
+- **Trade-off**: Two API calls add ~1-2s latency. Acceptable for an analytics dashboard.
 
-This separation improves reliability vs. a single prompt that must produce both SQL and visualization config.
+### Why No ORM?
+- DuckDB has excellent Python SQL support with parameterized queries
+- ORMs add abstraction overhead without benefit for simple CRUD + raw analytics queries
+- The SQL sandbox needs to work with raw SQL strings anyway
+- Direct SQL is more idiomatic for analytical workloads
 
-### SQL Sandboxing (Defense in Depth)
-LLM-generated SQL is untrusted input. The sandbox applies four layers:
-1. **Regex blocklist** - catches INSERT, DROP, COPY, file-reading functions, etc.
-2. **AST parsing via sqlglot** - structurally validates it's a single SELECT statement
-3. **Org ID filter check** - ensures multi-tenant isolation is preserved
-4. **LIMIT enforcement** - adds LIMIT 10000 if missing to prevent runaway queries
+### Why API Key for Login?
+- This is a local-only tool, not a SaaS with user accounts
+- The API key already exists for ingestion auth - reusing it avoids managing a second credential
+- Avoids complexity of password hashing, reset flows, etc.
+- **Trade-off**: If the key leaks, both ingestion AND dashboard access are compromised
 
-### Authentication
-Two auth mechanisms for two consumers:
-- **API Key** (header `X-API-Key`) - for event ingestion from SDKs/scripts. Keys are stored as SHA-256 hashes.
-- **Session Cookie** - for the dashboard UI. Login with an API key to get a session.
+### Saved Visualization Snapshots
+- Saved visualizations store a **snapshot** of the data at save time
+- Reloading is instant (no LLM call or query needed)
+- **Trade-off**: Data may become stale. In production you'd add a "refresh" button that re-runs the query.
 
-No passwords - the API key is the shared secret for a local-only tool.
+---
 
-### Multi-Tenant Isolation
-- Every event is tagged with `org_id` at ingestion
-- The NL-to-SQL prompt hardcodes `WHERE org_id = '{org_id}'` in every query
-- The SQL sandbox verifies the org_id filter exists before execution
-- Session auth resolves the org from the session token, not from user input
+## Multi-Tenant Isolation
+
+Four layers ensure one org can never access another's data:
+
+1. **Ingestion**: `org_id` is set from the authenticated API key, never from user input
+2. **Query generation**: The system prompt hardcodes `WHERE org_id = '{org_id}'` in every SQL query
+3. **SQL sandbox**: Verifies the org_id string appears in the generated SQL before execution
+4. **Session auth**: The org is resolved from the session token in the database, not from request parameters
+
+---
+
+## Authentication
+
+Two auth mechanisms for two different consumers:
+
+| Mechanism | Used By | How It Works |
+|-----------|---------|--------------|
+| **API Key** (`X-API-Key` header) | SDKs, curl, scripts | Key is `ea_live_<64 hex chars>`. Stored as SHA-256 hash. Validated by hashing the incoming key and looking up the hash. |
+| **Session Cookie** (HttpOnly) | Dashboard UI | Login with API key → creates session row in DB → sets HttpOnly cookie. Cookie is validated on each request by looking up the token with expiry check. |
+
+---
 
 ## API Reference
 
@@ -107,8 +249,9 @@ No passwords - the API key is the shared secret for a local-only tool.
 | `GET` | `/api/v1/visualizations/:id` | Session | Get saved visualization |
 | `DELETE` | `/api/v1/visualizations/:id` | Session | Delete visualization |
 
-### Event Ingestion Example
+### Event Ingestion Examples
 
+**Single event:**
 ```bash
 curl -X POST http://localhost:8000/api/v1/events \
   -H "Content-Type: application/json" \
@@ -120,35 +263,157 @@ curl -X POST http://localhost:8000/api/v1/events \
   }'
 ```
 
+**Batch (up to 1000 events):**
+```bash
+curl -X POST http://localhost:8000/api/v1/events/batch \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{
+    "events": [
+      {"event": "signup", "distinct_id": "user-1"},
+      {"event": "purchase", "distinct_id": "user-2", "properties": {"amount": 99.99}}
+    ]
+  }'
+```
+
+**NL query:**
+```bash
+curl -X POST http://localhost:8000/api/v1/query \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=YOUR_SESSION_TOKEN" \
+  -d '{"question": "Show daily active users for the last 30 days"}'
+```
+
+---
+
+## Database Schema
+
+Five tables in DuckDB:
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `organizations` | Tenant registry | id (UUID), name, slug |
+| `api_keys` | Auth for ingestion | key_hash (SHA-256), org_id, is_active |
+| `events` | Analytics data (append-only) | org_id, event_name, distinct_id, timestamp, properties (JSON) |
+| `saved_visualizations` | Saved query results | org_id, nl_question, generated_sql, result_data (JSON), chart_config (JSON) |
+| `sessions` | Dashboard auth state | org_id, token, expires_at |
+
+**Design note:** The `events` table has no primary key. It's append-only by design - columnar databases optimize for bulk inserts and analytical reads, not row-level updates. The lack of a PK avoids index maintenance overhead.
+
+---
+
+## Frontend Architecture
+
+### State Management (Zustand)
+- `authStore.ts`: Global auth state (orgId, orgName, isLoading)
+- Session check on app mount prevents login page flash on refresh
+- No Redux boilerplate - Zustand uses a single `create()` call
+
+### Config-Driven Chart Rendering
+`ChartRenderer.tsx` is a pure presentation component:
+- Backend decides WHAT to render (chart type, axes, series) via ChartConfig JSON
+- Frontend just maps config to Recharts components
+- Object lookup pattern (`{line: LineChart, bar: BarChart, ...}`) instead of switch statement
+- Supports 5 chart types: line, bar, area, pie, number
+
+### Routing
+- React Router v6 with nested routes
+- `Layout` component renders sidebar + `<Outlet />` for active page
+- `ProtectedRoute` wrapper redirects to login if no valid session
+
+---
+
 ## Project Structure
 
 ```
 event-analytics/
 ├── backend/
+│   ├── requirements.txt            # Python dependencies
 │   └── app/
-│       ├── main.py              # FastAPI app, lifespan, CORS
-│       ├── config.py            # Settings (env vars)
-│       ├── dependencies.py      # Auth dependencies
+│       ├── main.py                 # FastAPI app, lifespan, CORS config
+│       ├── config.py               # Settings via pydantic-settings (.env)
+│       ├── dependencies.py         # Auth dependencies (API key + session)
 │       ├── db/
-│       │   ├── engine.py        # DuckDB connection manager
-│       │   └── schema.py        # Table definitions
-│       ├── models/              # Pydantic request/response models
-│       ├── routers/             # API route handlers
+│       │   ├── engine.py           # DuckDB connection manager (write lock, MVCC reads)
+│       │   └── schema.py           # CREATE TABLE DDL statements
+│       ├── models/
+│       │   ├── organization.py     # Org create/response models
+│       │   ├── event.py            # Event validation (max 50 props, batch max 1000)
+│       │   ├── query.py            # NL query request/response
+│       │   └── visualization.py    # Saved visualization CRUD models
+│       ├── routers/
+│       │   ├── organizations.py    # POST /orgs (create org + API key)
+│       │   ├── auth.py             # Login, logout, session check
+│       │   ├── ingest.py           # Single + batch event ingestion
+│       │   ├── query.py            # NL query endpoint
+│       │   └── visualizations.py   # Saved visualizations CRUD
 │       ├── services/
-│       │   ├── ingestion.py     # Event validation + batch insert
-│       │   ├── nl_to_sql.py     # OpenAI SQL generation + orchestration
-│       │   ├── chart_config.py  # Chart type determination
-│       │   └── sql_sandbox.py   # SQL validation + sandboxing
+│       │   ├── ingestion.py        # Event validation + batch insert
+│       │   ├── nl_to_sql.py        # GPT-4o SQL generation + orchestration
+│       │   ├── chart_config.py     # GPT-4o-mini chart type determination
+│       │   └── sql_sandbox.py      # 4-layer SQL validation
 │       └── utils/
-│           └── api_key.py       # Key generation + hashing
+│           └── api_key.py          # Key generation (ea_live_*) + SHA-256 hashing
 ├── frontend/
+│   ├── package.json
+│   ├── vite.config.ts              # Dev proxy: /api/* → localhost:8000
+│   ├── tailwind.config.js
 │   └── src/
-│       ├── api/client.ts        # API client
-│       ├── stores/authStore.ts  # Auth state (Zustand)
-│       ├── components/          # ChartRenderer, QueryBar, Layout
-│       └── pages/               # Dashboard, Saved, Settings, Login
+│       ├── main.tsx                # Entry point (React + Router + Tailwind)
+│       ├── App.tsx                 # Routes + auth protection
+│       ├── api/client.ts           # Centralized fetch wrapper for all API calls
+│       ├── stores/authStore.ts     # Zustand auth state management
+│       ├── components/
+│       │   ├── ChartRenderer.tsx   # Config-driven Recharts (line/bar/area/pie/number)
+│       │   ├── QueryBar.tsx        # NL input + example question buttons
+│       │   └── Layout.tsx          # Sidebar navigation + Outlet
+│       └── pages/
+│           ├── DashboardPage.tsx   # Query bar + chart + SQL preview + raw data
+│           ├── LoginPage.tsx       # Login + org creation forms
+│           ├── SavedVisualizationsPage.tsx  # Browse + reload saved analytics
+│           └── SettingsPage.tsx    # Org info + ingestion docs
 ├── scripts/
-│   ├── seed.py                  # Generate demo org + 15K events
-│   └── run_dev.sh               # Start both servers
-└── data/                        # DuckDB file (gitignored)
+│   ├── seed.py                     # Generate demo org + 15K realistic events
+│   └── run_dev.sh                  # Start backend + frontend together
+├── data/                           # DuckDB file (gitignored)
+├── .env.example                    # Environment variable template
+└── .gitignore
 ```
+
+---
+
+## Seed Data
+
+`scripts/seed.py` generates realistic demo data with 7 weighted event types, realistic properties, and 200 distinct users.
+
+**Default (demo org with 15K events):**
+```bash
+python3 scripts/seed.py
+```
+
+**Custom organization:**
+```bash
+# Create a new org "Acme Corp" with 5K events over 60 days
+python3 scripts/seed.py --name "Acme Corp" --slug acme --events 5000 --days 60
+```
+
+**Options:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--name` | "Demo Organization" | Organization display name |
+| `--slug` | "demo" | URL-friendly identifier (must be unique) |
+| `--events` | 15000 | Number of events to generate |
+| `--days` | 30 | Days of history to spread events across |
+
+Each run creates a new org with its own API key (printed once). Events are isolated by org - logging in with one org's key only shows that org's data.
+
+**Event types and weights:**
+| Event | Weight | Example Properties |
+|-------|--------|--------------------|
+| page_view | 50 | page, referrer, browser |
+| button_click | 30 | button_id, page |
+| login | 20 | method (email/google/github) |
+| feature_used | 15 | feature (dashboard/export/api) |
+| signup | 8 | plan (free/pro), source |
+| error | 5 | error_code, page |
+| purchase | 3 | amount, plan, currency |

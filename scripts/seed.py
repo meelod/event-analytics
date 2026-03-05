@@ -110,6 +110,15 @@ def generate_events(num_events: int, days_back: int = 30) -> list[tuple]:
 
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seed event analytics database with demo data.")
+    parser.add_argument("--name", default="Demo Organization", help="Organization name (default: 'Demo Organization')")
+    parser.add_argument("--slug", default="demo", help="Organization slug (default: 'demo')")
+    parser.add_argument("--events", type=int, default=15000, help="Number of events to generate (default: 15000)")
+    parser.add_argument("--days", type=int, default=30, help="Days of history to generate (default: 30)")
+    args = parser.parse_args()
+
     print("Seeding event analytics database...")
     print(f"Database: {DB_PATH}")
 
@@ -117,17 +126,17 @@ def main():
     initialize_schema(db)
 
     # Check if org already exists
-    existing = db.execute_read("SELECT id FROM organizations WHERE slug = 'demo'")
+    existing = db.execute_read("SELECT id FROM organizations WHERE slug = ?", (args.slug,))
     if existing:
-        print("Demo org already exists, skipping org creation.")
+        print(f"Org '{args.slug}' already exists, skipping org creation.")
         org_id = existing[0]["id"]
     else:
-        # Create demo org
+        # Create org
         org_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         db.execute_write_sync(
             "INSERT INTO organizations (id, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            [(org_id, "Demo Organization", "demo", now, now)],
+            [(org_id, args.name, args.slug, now, now)],
         )
 
         # Create API key
@@ -138,14 +147,14 @@ def main():
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [(key_id, org_id, key_prefix(raw_key), hash_api_key(raw_key), "default", True, now)],
         )
-        print(f"\nOrganization: Demo Organization (slug: demo)")
+        print(f"\nOrganization: {args.name} (slug: {args.slug})")
         print(f"API Key: {raw_key}")
         print("(Save this key - it won't be shown again!)\n")
 
     # Generate events
-    num_events = 15000
-    print(f"Generating {num_events} events over the last 30 days...")
-    events = generate_events(num_events, days_back=30)
+    num_events = args.events
+    print(f"Generating {num_events} events over the last {args.days} days...")
+    events = generate_events(num_events, days_back=args.days)
 
     # Set org_id on all events
     events = [(e[0], org_id, *e[2:]) for e in events]

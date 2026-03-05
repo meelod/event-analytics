@@ -1,3 +1,15 @@
+/**
+ * Settings page - displays org info and API ingestion documentation.
+ *
+ * Shows:
+ * - Organization name, slug, and UUID
+ * - Example curl commands for single and batch event ingestion
+ *
+ * This page reads from the auth store (no API calls needed).
+ * The curl examples help developers integrate their apps with the
+ * event ingestion API using X-API-Key header authentication.
+ */
+
 import { useAuthStore } from "../stores/authStore";
 
 export default function SettingsPage() {

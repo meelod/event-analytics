@@ -1,3 +1,20 @@
+/**
+ * Saved visualizations page - browse and reload previously saved analytics.
+ *
+ * Data flow:
+ * 1. On mount, fetches the list (GET /api/v1/visualizations) - just metadata, no chart data
+ * 2. When user clicks a card, fetches full detail (GET /api/v1/visualizations/:id)
+ *    which includes the snapshot of result_data + chart_config
+ * 3. ChartRenderer renders the chart from the saved data - no LLM call needed
+ *
+ * Trade-off: Saved visualizations store a SNAPSHOT of the data at save time.
+ * They don't re-run the query, so the chart is instant but may be stale.
+ * This is intentional - it avoids burning LLM tokens on every reload.
+ *
+ * Delete: removes the visualization from the backend and optimistically
+ * removes it from the local list (no need to re-fetch).
+ */
+
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import ChartRenderer from "../components/ChartRenderer";
