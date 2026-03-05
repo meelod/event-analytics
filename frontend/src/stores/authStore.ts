@@ -25,6 +25,7 @@ interface AuthState {
   orgSlug: string | null;
   isLoading: boolean;      // true until checkSession completes
   login: (apiKey: string) => Promise<void>;
+  devLogin: (orgId: string) => Promise<void>;  // Dev mode: login by org ID
   logout: () => Promise<void>;
   checkSession: () => Promise<void>;
 }
@@ -38,6 +39,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (apiKey: string) => {
     const res = await api.login(apiKey);
     // Backend sets HttpOnly cookie; we just need to store the org info
+    set({ orgId: res.org_id, orgName: res.org_name });
+  },
+
+  // Dev mode: login by org ID without needing the API key
+  devLogin: async (orgId: string) => {
+    const res = await api.devLogin(orgId);
     set({ orgId: res.org_id, orgName: res.org_name });
   },
 

@@ -101,4 +101,25 @@ export const api = {
   // DELETE /api/v1/visualizations/:id - Remove a saved visualization
   deleteVisualization: (id: string) =>
     request<any>(`/visualizations/${id}`, { method: "DELETE" }),
+
+  // POST /api/v1/events/seed - Seed randomized demo data (developer mode)
+  seedDemoData: (count: number = 1000, daysBack: number = 30) =>
+    request<{ status: string; inserted: number; distribution: Record<string, number> }>(
+      "/events/seed",
+      {
+        method: "POST",
+        body: JSON.stringify({ count, days_back: daysBack }),
+      }
+    ),
+
+  // GET /api/v1/auth/dev/orgs - List all orgs (dev mode, no auth needed)
+  listOrgs: () =>
+    request<{ id: string; name: string; slug: string }[]>("/auth/dev/orgs"),
+
+  // POST /api/v1/auth/dev/login - Login by org ID without API key (dev mode)
+  devLogin: (orgId: string) =>
+    request<{ status: string; org_id: string; org_name: string }>("/auth/dev/login", {
+      method: "POST",
+      body: JSON.stringify({ org_id: orgId }),
+    }),
 };

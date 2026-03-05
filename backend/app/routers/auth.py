@@ -37,6 +37,11 @@ class LoginRequest(BaseModel):
     api_key: str
 
 
+class DevLoginRequest(BaseModel):
+    """Dev-only login: pick an org by ID, no API key needed."""
+    org_id: str
+
+
 class LoginResponse(BaseModel):
     status: str = "ok"
     org_id: str
@@ -47,6 +52,12 @@ class MeResponse(BaseModel):
     org_id: str
     org_name: str
     org_slug: str
+
+
+class OrgListItem(BaseModel):
+    id: str
+    name: str
+    slug: str
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -93,3 +104,53 @@ async def logout(response: Response):
     """Deletes the session cookie. Note: doesn't invalidate the session in the DB."""
     response.delete_cookie(key="session")
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Developer-mode endpoints: list orgs + login without API key.
+# These exist because API keys are hashed and can't be retrieved.
+# For a local-only tool, this is a convenient alternative to remembering keys.
+# In production you'd gate these behind an env flag or remove them entirely.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dev/orgs", response_model=list[OrgListItem])
+async def list_orgs_for_dev(db: DuckDBManager = Depends(get_db)):
+    """List all organizations. Dev convenience - no auth required."""
+    rows = db.execute_read("SELECT id, name, slug FROM organizations ORDER BY name")
+    return [OrgListItem(id=r["id"], name=r["name"], slug=r["slug"]) for r in rows]
+
+
+@router.post("/dev/login", response_model=LoginResponse)
+async def dev_login(body: DevLoginRequest, response: Response, db: DuckDBManager = Depends(get_db)):
+    """
+    Login by org ID without an API key. Dev convenience for local use.
+
+    Creates a session exactly like the normal login flow, but skips
+    the API key validation step. The org must exist in the DB.
+    """
+    from fastapi import HTTPException
+
+    rows = db.execute_read("SELECT id, name, slug FROM organizations WHERE id = ?", (body.org_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    org = rows[0]
+    token = secrets.token_urlsafe(32)
+    session_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(hours=settings.session_expiry_hours)
+
+    await db.execute_write(
+        "INSERT INTO sessions (id, org_id, token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        [(session_id, org["id"], token, now, expires)],
+    )
+
+    response.set_cookie(
+        key="session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=settings.session_expiry_hours * 3600,
+    )
+    return LoginResponse(org_id=org["id"], org_name=org["name"])
