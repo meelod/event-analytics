@@ -482,7 +482,7 @@ python3 scripts/seed.py --name "Acme Corp" --slug acme --events 5000 --days 60
 
 ### UI (Settings → Developer Mode)
 
-Toggle developer mode in Settings, then click "Seed Demo Data" to generate 1,000 events for the current org directly from the browser. No terminal needed.
+Toggle developer mode in Settings, then click "Seed Demo Data" to generate 1,000 events for the current org directly from the browser.
 
 ### Event Types and Weights
 
@@ -496,4 +496,50 @@ Toggle developer mode in Settings, then click "Seed Demo Data" to generate 1,000
 | error | 5 | error_code, page |
 | purchase | 3 | amount, plan, currency |
 
-Events use 200 synthetic user IDs and are distributed with a Gaussian bias toward business hours (peak at 1pm).
+
+# How I Used AI
+
+## How I Used AI Tools
+I used AI primarily as a development accelerator and brainstorming partner while building the system. I started with a clear architecture in mind: an event ingestion API backed by a SQL database, a natural-language query interface that converts questions into SQL, and a chart renderer that visualizes the query results.
+
+During planning, I used Claude to stress-test the architecture and identify potential gaps in the pipeline. This led to a design where SQL generation and chart selection were handled by separate LLM calls, which improved reliability and made the responsibilities of each step clearer.
+
+During implementation, I used Claude Code and Cursor to scaffold parts of the backend such as API routers, database setup, and service layer structure. I treated AI outputs as initial drafts that I reviewed, refined, and integrated into the final architecture.
+
+For the frontend, I relied less on AI generation and used Cursor mostly for code completion and small refactors, since I prefer writing most UI logic directly.
+
+## Where AI Helped
+AI was most useful for accelerating repetitive development tasks and helping iterate on system structure. Specifically, it helped with:
+
+- Generating initial scaffolding for FastAPI routers and service modules  
+- Structuring parts of the NL → SQL pipeline  
+- Drafting the SQL sandbox validation layers  
+- Generating boilerplate for React components and the API client  
+- Rapidly iterating on prompt structures for SQL generation and chart configuration  
+
+This let me spend more time on architecture, data flow, multi-tenant isolation, and safety mechanisms rather than boilerplate.
+
+## Where I Corrected or Refactored AI Output
+Several areas required manual corrections or redesign. One example was authentication and developer usability. The initial AI-generated approach for login and API key handling was more complex than needed for a local-first tool. I refactored this into a simpler model: API-key login that creates a session cookie for dashboard usage.
+
+Another area was developer workflows like seeding demo data and quickly accessing organizations. Since API keys are hashed and unrecoverable after creation, the AI-generated approach did not provide an ergonomic way to log in later. I designed a developer mode with quick-login and seeding endpoints to make the system easy to test locally.
+
+I also refactored parts of the ingestion and query orchestration logic to make service boundaries clearer and ensure LLM-generated SQL always passes strict validation before execution.
+
+## What I Would Improve With Another Week
+With another week, I would focus on:
+
+1. **NL-to-SQL robustness**
+   - Add an intermediate query plan (structured representation) before SQL
+   - Expand prompt evaluation cases and edge-case handling
+   - Strengthen guardrails for tricky aggregations and ambiguous questions
+
+2. **Performance and scalability**
+   - Add caching for repeated queries and saved visualizations
+   - Explore indexing/partitioning strategies for common query patterns
+   - Improve ingestion throughput and batching behavior
+
+3. **Testing and observability**
+   - Add integration tests for ingestion + query pipeline
+   - Add structured logging and better error reporting for LLM failures
+   - Add a small evaluation suite to measure SQL accuracy and sandbox effectiveness
